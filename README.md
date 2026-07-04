@@ -130,18 +130,3 @@ sqlite3 ~/.9router/db/data.sqlite "DELETE FROM providerNodes WHERE name='iamhc'"
 2. **Port conflict** — pastikan `20128` free sebelum start (`fuser -k 20128/tcp`).
 3. **API key ke-mask** — key yang udah masuk di-mask di response, gak bisa di-retrieve balik via API.
 4. **Cek health** — selalu verify `{"ok":true}` sebelum add key.
-
----
-
-## 📊 iamhc.cn — Model Stabil (Juli 2026)
-
-| Model | Latency |
-|-------|---------|
-| Kimi-K2.6 | 1.5s 🚀 |
-| Qwen3.5-397B-A17B | 1.3s 🚀 |
-| Qwen3-Coder-Next-FP8 | 1.3s 🚀 |
-| glm-4.7 | 1.4s 🚀 |
-| glm-5.2 | 2.7s ✅ |
-| kat-coder-pro-v2 | 1.5s 🚀 |
-| MiniMax-M3 | 7.0s ⚠️ |
-| DeepSeek-V4-Pro | 10.6s ⚠️ |
