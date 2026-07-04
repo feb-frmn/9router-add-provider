@@ -1,104 +1,123 @@
 # 9router — Provider Setup Guide
 
-Everything you need to wire up AI providers in [9router](https://github.com/): the **94 providers that ship built-in**, plus how to bolt on **any OpenAI-compatible endpoint that isn't in the registry** (like `iamhc`) without rebuilding.
+Everything you need to wire up AI providers in [9router](https://github.com/): the **94 providers that ship built-in**, plus how to bolt on **any OpenAI-compatible endpoint that isn't in the registry** (like `iamhc`) — using the same API the dashboard uses.
 
-Two paths, and it's important not to mix them up:
+Two paths:
 
-| You want to add… | Path | Rebuild? |
+| You want to add… | How | Restart? |
 |---|---|---|
-| A provider already in the registry (OpenAI, Groq, Together, DeepSeek, 90 others) | Dashboard → New → pick it → paste key | No |
-| An OpenAI-compatible endpoint **not** in the registry (e.g. `iamhc`) | Insert a node into the SQLite DB → restart → paste key | No (just a restart) |
+| A provider already in the registry (OpenAI, Groq, Together, DeepSeek, +90 more) | Dashboard → New → pick it → paste key | No |
+| An OpenAI-compatible endpoint **not** in the registry (e.g. `iamhc`) | 2 API calls: create node → attach key | No |
 
-> TL;DR — you almost never need to touch code. If the provider ships with 9router, the dashboard has it. The DB trick is only for custom endpoints the registry doesn't know about yet.
+> Heads up: don't try to hand-insert rows with the `sqlite3` CLI. 9router loads its DB into memory (sql.js) at startup, so raw CLI writes are invisible to the running process. Use the HTTP API below — it's what the dashboard calls, and it works live with no restart.
 
 ---
 
 ## Path 1 — Built-in providers (the common case)
 
-9router ships with **94 providers** out of the box. No DB edits, no rebuild. Just:
+9router ships with **94 providers** out of the box. No API calls, no restart:
 
 1. Open `http://<host>:20128/dashboard/providers/new`
 2. Pick the provider
 3. Paste your API key (or run the OAuth flow)
 4. Save → hit **Test**
 
-That's it. The full list is at the bottom of this README so you can confirm yours is already there before reaching for Path 2.
+Full catalog at the bottom — check it before reaching for Path 2.
 
 ---
 
 ## Path 2 — Custom OpenAI-compatible endpoint (e.g. iamhc)
 
-Use this **only** when your provider isn't in the built-in list but exposes a standard `/v1/chat/completions` (OpenAI-compatible) API.
+For any provider that isn't built-in but exposes a standard `/v1/chat/completions` (OpenAI-compatible) API. Two calls, done.
 
-### Why the DB instead of editing code
-
-You *could* add a file under `open-sse/providers/registry/` and regenerate `index.js` — but that's an auto-generated import list, and any change means `npm run build` (slow, easy to break). Inserting a node straight into SQLite skips all of that. The provider shows up in the dashboard after a restart.
-
-### Heads up on the schema
-
-The `providerNodes` table columns are:
-
-```
-id TEXT PRIMARY KEY, type TEXT, name TEXT, data TEXT NOT NULL, createdAt TEXT, updatedAt TEXT
-```
-
-The config JSON goes in the **`data`** column. (If you see `Error: no such column: config`, you used the wrong column name — it's `data`.)
-
-### Step 1 — Insert the node
+### Step 1 — Create the node
 
 ```bash
-sqlite3 ~/.9router/db/data.sqlite "
-INSERT OR REPLACE INTO providerNodes (id, type, name, data, createdAt, updatedAt)
-VALUES (
-  'openai-compatible-chat-iamhc',
-  'openai-compatible-chat',
-  'iamhc',
-  '{\"prefix\":\"iamhc\",\"apiType\":\"chat\",\"baseUrl\":\"https://api.iamhc.cn/v1\",\"nodeName\":\"iamhc\"}',
-  datetime('now'),
-  datetime('now')
-);
-"
+curl -s -X POST http://localhost:20128/api/provider-nodes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "iamhc",
+    "prefix": "iamhc",
+    "apiType": "chat",
+    "baseUrl": "https://api.iamhc.cn/v1",
+    "type": "openai-compatible"
+  }'
 ```
 
-Swap the four values (`id` suffix, `name`, `prefix`, `baseUrl`) for any other custom endpoint.
+Response contains the node id — grab it:
 
-### Step 2 — Restart (a fresh node won't appear until you do)
+```json
+{"node":{"id":"openai-compatible-chat-9b70da90-...","type":"openai-compatible","name":"iamhc","prefix":"iamhc","apiType":"chat","baseUrl":"https://api.iamhc.cn/v1"}}
+```
+
+- `prefix` is how you'll call models later: `iamhc/<model>`.
+- `apiType` is `chat` (standard) or `responses` (OpenAI Responses API).
+- `baseUrl` is the root — **no** `/chat/completions` suffix; 9router appends it.
+
+### Step 2 — Attach your API key
+
+Use the **full node id** from step 1 as the `provider` field (this is the bit people get wrong — it's the long id, not the short name):
 
 ```bash
-pkill -f "next.*9router" 2>/dev/null
-fuser -k 20128/tcp 2>/dev/null   # free the port if it's stuck
-sleep 3
+NODE_ID="openai-compatible-chat-9b70da90-..."   # from step 1
 
-cd ~/9router && PORT=20128 nohup npm start > /tmp/9router.log 2>&1 &
-
-sleep 10
-curl -s http://localhost:20128/api/health   # expect {"ok":true}
+curl -s -X POST http://localhost:20128/api/providers \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"provider\": \"${NODE_ID}\",
+    \"name\": \"iamhc\",
+    \"apiKey\": \"sk-YOUR-KEY\"
+  }"
 ```
 
-### Step 3 — Add your key in the dashboard
+That's it — the provider is live immediately, no restart.
 
-`http://<host>:20128/dashboard/providers/new` → pick your provider (e.g. **iamhc**) → paste key → Save → Test.
+### Step 3 — Verify with a real completion
 
-### Step 4 — Verify it's live
+Model format is `<prefix>/<model>`:
 
 ```bash
-curl -s http://localhost:20128/api/providers | python3 -c "
-import json, sys
-for c in json.load(sys.stdin).get('connections', []):
-    print(c.get('name','?'), '->', c.get('testStatus','?'))
-"
+curl -s -X POST http://localhost:20128/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "iamhc/Kimi-K2.6",
+    "messages": [{"role":"user","content":"reply with exactly: PONG"}],
+    "max_tokens": 20
+  }'
 ```
 
-### Managing custom nodes
+A real model response back = you're done.
+
+### One-liner (both steps, auto-parses the id)
 
 ```bash
-# List everything you've added
-sqlite3 ~/.9router/db/data.sqlite \
-  "SELECT name, json_extract(data,'\$.baseUrl') FROM providerNodes"
+API_KEY="sk-YOUR-KEY"
+NODE_ID=$(curl -s -X POST http://localhost:20128/api/provider-nodes \
+  -H "Content-Type: application/json" \
+  -d '{"name":"iamhc","prefix":"iamhc","apiType":"chat","baseUrl":"https://api.iamhc.cn/v1","type":"openai-compatible"}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['node']['id'])")
 
-# Remove one
-sqlite3 ~/.9router/db/data.sqlite "DELETE FROM providerNodes WHERE name='iamhc'"
+curl -s -X POST http://localhost:20128/api/providers \
+  -H "Content-Type: application/json" \
+  -d "{\"provider\":\"${NODE_ID}\",\"name\":\"iamhc\",\"apiKey\":\"${API_KEY}\"}"
 ```
+
+### Managing nodes
+
+```bash
+# List all custom nodes
+curl -s http://localhost:20128/api/provider-nodes | python3 -m json.tool
+
+# Delete a node by id
+curl -s -X DELETE http://localhost:20128/api/provider-nodes/<NODE_ID>
+```
+
+### Anthropic-compatible or embeddings?
+
+Same `/api/provider-nodes` call, just change `type`:
+
+- `"type": "anthropic-compatible"` for Claude-style `/v1/messages` endpoints (drop `apiType`)
+- `"type": "custom-embedding"` for embedding endpoints (drop `apiType`)
 
 ---
 
@@ -107,44 +126,46 @@ sqlite3 ~/.9router/db/data.sqlite "DELETE FROM providerNodes WHERE name='iamhc'"
 Copy-paste, swap `[API_KEY]`, done:
 
 ```
-Add a custom OpenAI-compatible provider called "iamhc" to my 9router.
+Add a custom OpenAI-compatible provider "iamhc" to my running 9router (port 20128).
 
-Environment:
-- 9router lives at ~/9router/
-- SQLite DB at ~/.9router/db/data.sqlite
-- Runs on port 20128
+Do NOT use the sqlite3 CLI — 9router runs its DB in memory (sql.js), so raw SQL inserts
+are invisible to the live process. Use 9router's HTTP API instead (same as the dashboard):
 
-Do this:
-1. Insert the node (note: the config JSON goes in the `data` column, not `config`):
-   sqlite3 ~/.9router/db/data.sqlite "INSERT OR REPLACE INTO providerNodes (id, type, name, data, createdAt, updatedAt) VALUES ('openai-compatible-chat-iamhc', 'openai-compatible-chat', 'iamhc', '{\"prefix\":\"iamhc\",\"apiType\":\"chat\",\"baseUrl\":\"https://api.iamhc.cn/v1\",\"nodeName\":\"iamhc\"}', datetime('now'), datetime('now'));"
+Step 1 — create the node, capture its id:
+  curl -s -X POST http://localhost:20128/api/provider-nodes \
+    -H "Content-Type: application/json" \
+    -d '{"name":"iamhc","prefix":"iamhc","apiType":"chat","baseUrl":"https://api.iamhc.cn/v1","type":"openai-compatible"}'
 
-2. Restart 9router in the background:
-   pkill -f "next.*9router"; fuser -k 20128/tcp; sleep 3
-   cd ~/9router && PORT=20128 nohup npm start > /tmp/9router.log 2>&1 &
-   sleep 10 && curl -s http://localhost:20128/api/health   # want {"ok":true}
+Step 2 — attach the API key, using the FULL node id from step 1 as "provider":
+  curl -s -X POST http://localhost:20128/api/providers \
+    -H "Content-Type: application/json" \
+    -d '{"provider":"<NODE_ID_FROM_STEP_1>","name":"iamhc","apiKey":"[API_KEY]"}'
 
-3. Tell me to add the API key in the dashboard at:
-   http://localhost:20128/dashboard/providers/new
+Step 3 — verify with a real completion (model = <prefix>/<model>):
+  curl -s -X POST http://localhost:20128/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model":"iamhc/Kimi-K2.6","messages":[{"role":"user","content":"say PONG"}],"max_tokens":20}'
 
-My iamhc API key: [API_KEY]
+If step 3 returns a model reply, it's working. No restart needed.
 ```
 
 ---
 
-## Gotchas
+## Gotchas (all learned the hard way)
 
-- **`data` vs `config`** — the config column is `data`. Wrong name → `no such column: config`.
-- **Restart is mandatory** for a new DB node to show up. A running instance won't hot-reload it.
-- **Port already in use** (`EADDRINUSE :::20128`) — an old process is still holding it. `fuser -k 20128/tcp` then start again.
-- **Keys are masked on read** — once saved, the API won't hand a key back to you in plaintext. Keep your own copy.
-- **OpenAI-compatible only** — Path 2 assumes a standard `/v1/chat/completions` shape. Providers with bespoke formats (Claude messages, Gemini, protobuf, etc.) already have dedicated built-in entries; use those.
-- **Always health-check** `{"ok":true}` before adding keys.
+- **Don't use the `sqlite3` CLI.** The live process uses sql.js in-memory; CLI writes aren't seen and can be clobbered. Use the HTTP API.
+- **`provider` = the full node id.** In step 2, `provider` must be the long `openai-compatible-chat-<uuid>` id from step 1, not the short name. Passing `"iamhc"` gives `Invalid provider`.
+- **`baseUrl` has no `/chat/completions` suffix.** Give the root (e.g. `https://api.iamhc.cn/v1`); 9router appends the path.
+- **One connection per node.** Each node accepts a single API key. Need a second key? Create a second node.
+- **Keys are masked on read.** Once saved, the API won't return the key in plaintext — keep your own copy.
+- **Health check first.** `curl -s http://localhost:20128/api/health` should return `{"ok":true}`.
+- **Port stuck** (`EADDRINUSE :::20128`)? An old process holds it — `fuser -k 20128/tcp`, then restart.
 
 ---
 
 ## Built-in provider catalog (all 94)
 
-Everything below is already in 9router — just pick it in the dashboard. Grouped by type.
+Already in 9router — just pick them in the dashboard (Path 1). Grouped by type.
 
 ### LLM APIs — API key (31)
 
@@ -176,4 +197,4 @@ Everything below is already in 9router — just pick it in the dashboard. Groupe
 
 ---
 
-*Catalog verified against the 9router registry on 2026-07-04. If yours isn't listed here, use Path 2.*
+*Verified against a live 9router instance on 2026-07-04: node creation → key attach → real `iamhc/Kimi-K2.6` completion all confirmed working via the HTTP API. If your provider isn't in the catalog above, use Path 2.*
