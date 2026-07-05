@@ -140,35 +140,60 @@ else
   echo "   ✅ Connection created: $CONN_ID"
 fi
 
-# Step 3 — Verify with a test request
+# Step 3 — Discover available models
 echo ""
-echo "[3/3] Testing with a real request..."
+echo "[3/3] Discovering available models..."
 
-# Try to find a working model — test with a few common ones
-MODELS=("gpt-4o" "gpt-4o-mini" "claude-sonnet-4-6" "glm-5.2" "deepseek-chat" "kimi-k2.6")
+MODELS_JSON=$(curl -s -m 15 "$URL/models" -H "Authorization: Bearer $KEY" 2>/dev/null)
+MODEL_LIST=$(echo "$MODELS_JSON" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    models = d.get('data', [])
+    if models:
+        print(f'Found {len(models)} models:')
+        for m in models:
+            mid = m.get('id','')
+            print(f'  → {mid}')
+    else:
+        print('NO_MODELS')
+except:
+    print('NO_MODELS')
+" 2>/dev/null)
 
-WORKED=false
-for MODEL in "${MODELS[@]}"; do
-  FULL_MODEL="$PREFIX/$MODEL"
-  RESP=$(curl -s -m 30 "http://$HOST/v1/chat/completions" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"model\": \"$FULL_MODEL\",
-      \"messages\": [{\"role\":\"user\",\"content\":\"reply with exactly: PONG\"}],
-      \"max_tokens\": 10
-    }" 2>/dev/null)
+if [[ "$MODEL_LIST" == "NO_MODELS" ]]; then
+  echo "   ⚠️  Could not list models (some providers don't expose /models)."
+  echo "   Check the provider docs for available model names."
+else
+  echo "   $MODEL_LIST"
 
-  if echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'choices' in d" 2>/dev/null; then
-    echo "   ✅ $FULL_MODEL works!"
-    WORKED=true
-    break
+  # Auto-test first model
+  FIRST_MODEL=$(echo "$MODELS_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+models = d.get('data', [])
+if models: print(models[0]['id'])
+" 2>/dev/null)
+
+  if [[ -n "$FIRST_MODEL" ]]; then
+    echo ""
+    echo "   Testing $PREFIX/$FIRST_MODEL..."
+    RESP=$(curl -s -m 30 "http://$HOST/v1/chat/completions" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"model\": \"$PREFIX/$FIRST_MODEL\",
+        \"messages\": [{\"role\":\"user\",\"content\":\"reply with exactly: PONG\"}],
+        \"max_tokens\": 10
+      }" 2>/dev/null)
+
+    if echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'choices' in d" 2>/dev/null; then
+      echo "   ✅ $PREFIX/$FIRST_MODEL works!"
+    else
+      ERR=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error',{}).get('message','unknown error')[:100])" 2>/dev/null)
+      echo "   ⚠️  Test failed: $ERR"
+      echo "   Provider is added — try other models manually."
+    fi
   fi
-done
-
-if [[ "$WORKED" == "false" ]]; then
-  echo "   ⚠️  No test model responded. Provider is added but verify manually:"
-  echo "      curl http://$HOST/v1/chat/completions -H 'Content-Type: application/json' \\"
-  echo "        -d '{\"model\":\"$PREFIX/<model-name>\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 fi
 
 echo ""

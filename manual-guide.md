@@ -162,6 +162,24 @@ db.close()
 
 ---
 
+## Discover available models
+
+Most OpenAI-compatible providers expose a `/models` endpoint:
+
+```bash
+curl -s https://api.inference.net/v1/models \
+  -H "Authorization: Bearer sk-your-key" | python3 -m json.tool
+```
+
+⚠️ **Model names vary wildly between providers.** Some use short names (`glm-5.2`), others use full paths (`deepseek/deepseek-v3/fp-8`). Always check `/models` first!
+
+In 9router, you call them as `<prefix>/<model>`:
+- `inf/deepseek/deepseek-v3/fp-8` (inference.net)
+- `iamhc/Kimi-K2.6` (iamhc)
+- `bg/glm-5.2` (bigmodel)
+
+---
+
 ## Gotchas
 
 1. **`baseUrl` = root only.** Give `https://api.inference.net/v1`, NOT `https://api.inference.net/v1/chat/completions`. 9router appends the path.
@@ -172,7 +190,7 @@ db.close()
 
 4. **Keys are masked on read.** The API never returns your key in plaintext after saving.
 
-5. **Model format:** `<prefix>/<model>` — e.g. `inf/glm-5.2`, `iamhc/Kimi-K2.6`
+5. **Model names are provider-specific.** Don't assume short names work — check `/models` endpoint or provider docs. Inference.net uses `org/model/quant` format, iamhc uses `Model-Name`, bigmodel uses `glm-X.Y`.
 
 6. **Provider types:**
    - `openai-compatible` — standard `/v1/chat/completions` (most providers)
@@ -182,3 +200,5 @@ db.close()
 7. **API types:**
    - `chat` — standard chat completions (default)
    - `responses` — OpenAI Responses API format
+
+8. **DB is file-based** (better-sqlite3 with WAL mode). Both HTTP API and direct `sqlite3` CLI work. Changes are visible to the live process immediately.
