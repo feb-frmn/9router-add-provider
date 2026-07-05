@@ -144,7 +144,7 @@ fi
 echo ""
 echo "[3/3] Discovering available models..."
 
-MODELS_JSON=$(curl -s -m 15 "$URL/models" -H "Authorization: Bearer $KEY" 2>/dev/null)
+MODELS_JSON=$(curl -s -m 30 "$URL/models" -H "Authorization: Bearer $KEY" 2>/dev/null || echo "{}")
 MODEL_LIST=$(echo "$MODELS_JSON" | python3 -c "
 import json, sys
 try:
@@ -167,12 +167,18 @@ if [[ "$MODEL_LIST" == "NO_MODELS" ]]; then
 else
   echo "   $MODEL_LIST"
 
-  # Auto-test first model
+  # Auto-test first non-meta model (skip 'auto', 'router', audio/image models)
   FIRST_MODEL=$(echo "$MODELS_JSON" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-models = d.get('data', [])
-if models: print(models[0]['id'])
+skip = {'auto', 'step-router-v1'}
+skip_prefix = ('stepaudio', 'step-image')
+for m in d.get('data', []):
+    mid = m.get('id','')
+    if mid in skip or any(mid.startswith(p) for p in skip_prefix):
+        continue
+    print(mid)
+    break
 " 2>/dev/null)
 
   if [[ -n "$FIRST_MODEL" ]]; then
@@ -184,13 +190,13 @@ if models: print(models[0]['id'])
         \"model\": \"$PREFIX/$FIRST_MODEL\",
         \"messages\": [{\"role\":\"user\",\"content\":\"reply with exactly: PONG\"}],
         \"max_tokens\": 10
-      }" 2>/dev/null)
+      }" 2>/dev/null || echo "{}")
 
     if echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'choices' in d" 2>/dev/null; then
       echo "   ✅ $PREFIX/$FIRST_MODEL works!"
     else
-      ERR=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error',{}).get('message','unknown error')[:100])" 2>/dev/null)
-      echo "   ⚠️  Test failed: $ERR"
+      ERR=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error',{}).get('message','unknown error')[:100])" 2>/dev/null || echo "timeout or no response")
+      echo "   ⚠️  Test: $ERR"
       echo "   Provider is added — try other models manually."
     fi
   fi
@@ -200,3 +206,4 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " ✅ Done! Use models as: $PREFIX/<model-name>"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+exit 0
