@@ -2,12 +2,14 @@
 # list-providers.sh — Show all providers and their status in 9router
 # Usage: bash list-providers.sh [--db /path/to/data.sqlite]
 
+set -euo pipefail
+
 DB="/var/lib/9router/db/data.sqlite"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --db) DB="$2"; shift 2 ;;
-    *) shift ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
@@ -68,11 +70,11 @@ for name, prefix, url, active, status, err, backoff, last_err in rows:
     print(f" {icon} {name:<13} {prefix or '?':<10} {url_short:<40} {status or '?':<10} {err or '-'}")
 
 # Summary
-total_builtin = len([r for r in rows])
+total_custom = len(rows)
 total = db.execute("SELECT COUNT(*) FROM providerConnections").fetchone()[0]
 active = db.execute("SELECT COUNT(*) FROM providerConnections WHERE isActive=1 AND json_extract(data, '$.testStatus')='active'").fetchone()[0]
 print()
-print(f" Total: {total} connections ({active} active)")
+print(f" Total: {total} connections ({active} active, {total_custom} custom)")
 
 db.close()
 PYEOF

@@ -99,12 +99,15 @@ NODE_ID=$(echo "$NODE_JSON" | python3 -c "import json,sys; print(json.load(sys.s
 if [[ -z "$NODE_ID" ]]; then
   # Maybe node already exists — try to find it
   echo "   ⚠️  Node creation failed (might already exist). Searching..."
+  # Escape single quotes for Python string interpolation
+  PREFIX_PY="${PREFIX//\'/\\\'}"
+  NAME_PY="${NAME//\'/\\\'}"
   NODE_ID=$(curl -s "http://$HOST/api/provider-nodes" 2>/dev/null | \
     python3 -c "
 import json, sys
 nodes = json.load(sys.stdin).get('nodes', [])
 for n in nodes:
-  if n.get('prefix') == '$PREFIX' or n.get('name') == '$NAME':
+  if n.get('prefix') == '$PREFIX_PY' or n.get('name') == '$NAME_PY':
     print(n['id'])
     break
 " 2>/dev/null)

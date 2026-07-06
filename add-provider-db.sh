@@ -72,27 +72,38 @@ echo " URL: $URL"
 echo " DB: $DB"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Sanitize for SQL queries
+PREFIX_SQL="${PREFIX//\'/\'\'}"
+NAME_SQL="${NAME//\'/\'\'}"
+NODE_ID_SQL="${NODE_ID//\'/\'\'}"
+
+# Escape for Python string interpolation
+PREFIX_PY="${PREFIX//\'/\\\'}"
+NAME_PY="${NAME//\'/\\\'}"
+KEY_PY="${KEY//\'/\\\'}"
+API_TYPE_PY="${API_TYPE//\'/\\\'}"
+URL_PY="${URL//\'/\\\'}"
+
 # Check if node with same prefix already exists
-EXISTING=$(sqlite3 "$DB" "SELECT id FROM providerNodes WHERE json_extract(data, '$.prefix')='$PREFIX' LIMIT 1" 2>/dev/null || echo "")
+EXISTING=$(sqlite3 "$DB" "SELECT id FROM providerNodes WHERE json_extract(data, '$.prefix')='$PREFIX_SQL' LIMIT 1" 2>/dev/null || echo "")
 
 if [[ -n "$EXISTING" ]]; then
   echo "⚠️  Node with prefix '$PREFIX' already exists: $EXISTING"
   echo "   Adding new connection to existing node..."
   NODE_ID="$EXISTING"
+  NODE_ID_SQL="${NODE_ID//\'/\'\'}"
 else
   # Create provider node
   NODE_DATA=$(python3 -c "
 import json
 print(json.dumps({
-    'prefix': '$PREFIX',
-    'apiType': '$API_TYPE',
-    'baseUrl': '$URL',
-    'nodeName': '$NAME'
+    'prefix': '$PREFIX_PY',
+    'apiType': '$API_TYPE_PY',
+    'baseUrl': '$URL_PY',
+    'nodeName': '$NAME_PY'
 }))
 ")
-
-  sqlite3 "$DB" "INSERT INTO providerNodes (id, type, name, data, createdAt, updatedAt) 
-    VALUES ('$NODE_ID', 'openai-compatible', '$NAME', '$NODE_DATA', '$NOW', '$NOW')"
+  NODE_DATA_SQL="${NODE_DATA//\'/\'\'}"
   echo "✅ Node created: $NODE_ID"
 fi
 
@@ -100,13 +111,13 @@ fi
 CONN_DATA=$(python3 -c "
 import json
 print(json.dumps({
-    'apiKey': '$KEY',
+    'apiKey': '$KEY_PY',
     'testStatus': 'active',
     'providerSpecificData': {
-        'prefix': '$PREFIX',
-        'apiType': '$API_TYPE',
-        'baseUrl': '$URL',
-        'nodeName': '$NAME',
+        'prefix': '$PREFIX_PY',
+        'apiType': '$API_TYPE_PY',
+        'baseUrl': '$URL_PY',
+        'nodeName': '$NAME_PY',
         'connectionProxyEnabled': False,
         'connectionProxyUrl': '',
         'connectionNoProxy': ''
@@ -114,9 +125,16 @@ print(json.dumps({
     'backoffLevel': 0
 }))
 ")
+CONN_DATA_SQL="${CONN_DATA//\'/\'\'}"
 
-sqlite3 "$DB" "INSERT INTO providerConnections (id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
-  VALUES ('$CONN_UUID', '$NODE_ID', 'apikey', '$NAME', NULL, 1, 1, '$CONN_DATA', '$NOW', '$NOW')"
+# Wrap inserts in a transaction
+SQL_CMDS="BEGIN TRANSACTION;"
+if [[ -z "$EXISTING" ]]; then
+  SQL_CMDS+="INSERT INTO providerNodes (id, type, name, data, createdAt, updatedAt) VALUES ('$NODE_ID_SQL', 'openai-compatible', '$NAME_SQL', '$NODE_DATA_SQL', '$NOW', '$NOW');"
+fi
+SQL_CMDS+="INSERT INTO providerConnections (id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES ('$CONN_UUID', '$NODE_ID_SQL', 'apikey', '$NAME_SQL', NULL, 1, 1, '$CONN_DATA_SQL', '$NOW', '$NOW');"
+SQL_CMDS+="COMMIT;"
+sqlite3 "$DB" "$SQL_CMDS"
 echo "✅ Connection created: $CONN_UUID"
 
 echo ""

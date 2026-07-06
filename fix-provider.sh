@@ -42,9 +42,12 @@ if [[ ! -f "$DB" ]]; then
   exit 1
 fi
 
+# Sanitize for SQL queries
+PREFIX_SQL="${PREFIX//\'/\'\'}"
+
 # Find connection
 if [[ -n "$PREFIX" ]]; then
-  CONN_ID=$(sqlite3 "$DB" "SELECT id FROM providerConnections WHERE json_extract(data, '$.providerSpecificData.prefix')='$PREFIX' LIMIT 1" 2>/dev/null)
+  CONN_ID=$(sqlite3 "$DB" "SELECT id FROM providerConnections WHERE json_extract(data, '$.providerSpecificData.prefix')='$PREFIX_SQL' LIMIT 1" 2>/dev/null)
 fi
 
 if [[ -z "$CONN_ID" ]]; then
@@ -58,12 +61,17 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo " Fixing connection: $CONN_ID"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Escape single quotes for Python string interpolation
+DB_PY="${DB//\'/\\\'}"
+CONN_ID_PY="${CONN_ID//\'/\\\'}"
+NEW_URL_PY="${NEW_URL//\'/\\\'}"
+
 # Get current data and fix it
 python3 << PYEOF
 import json, sqlite3
 
-db = sqlite3.connect('$DB')
-row = db.execute("SELECT data, name FROM providerConnections WHERE id='$CONN_ID'").fetchone()
+db = sqlite3.connect('$DB_PY')
+row = db.execute("SELECT data, name FROM providerConnections WHERE id=?", ('$CONN_ID_PY',)).fetchone()
 if not row:
     print("❌ Connection not found")
     exit(1)
@@ -75,7 +83,7 @@ print(f"   Status: {data.get('testStatus', '?')} (error: {data.get('errorCode', 
 print(f"   Backoff: {data.get('backoffLevel', 0)}")
 
 # Fix baseUrl if requested
-new_url = '$NEW_URL'
+new_url = '$NEW_URL_PY'
 if new_url:
     old_url = data.get('providerSpecificData', {}).get('baseUrl', '')
     data['providerSpecificData']['baseUrl'] = new_url
@@ -94,10 +102,11 @@ for k in locks:
 print(f"   Cleared {len(locks)} model locks")
 
 # Update
-now = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
 db.execute(
     "UPDATE providerConnections SET data=?, isActive=1, updatedAt=? WHERE id=?",
-    (json.dumps(data), now, '$CONN_ID')
+    (json.dumps(data), now, '$CONN_ID_PY')
 )
 db.commit()
 db.close()
