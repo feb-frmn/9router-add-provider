@@ -140,11 +140,11 @@ else
   echo "   ✅ Connection created: $CONN_ID"
 fi
 
-# Step 3 — Discover available models
+# Step 3 — Discover available models (Robust Auto-Fetch)
 echo ""
 echo "[3/3] Discovering available models..."
 
-MODELS_JSON=$(curl -s -m 30 "$URL/models" -H "Authorization: Bearer $KEY" 2>/dev/null || echo "{}")
+MODELS_JSON=$(curl -s -m 20 "$URL/models" -H "Authorization: Bearer $KEY" 2>/dev/null || echo "{}")
 MODEL_LIST=$(echo "$MODELS_JSON" | python3 -c "
 import json, sys
 try:
@@ -153,57 +153,51 @@ try:
     if models:
         print(f'Found {len(models)} models:')
         for m in models:
-            mid = m.get('id','')
-            print(f'  → {mid}')
+            print(f'  → {m.get(\'id\', \'\')}')
     else:
         print('NO_MODELS')
-except:
+except Exception:
     print('NO_MODELS')
 " 2>/dev/null)
 
 if [[ "$MODEL_LIST" == "NO_MODELS" ]]; then
-  echo "   ⚠️  Could not list models (some providers don't expose /models)."
-  echo "   Check the provider docs for available model names."
+  echo "   ⚠️  Could not list models. The provider might not support /models endpoint."
+  echo "   Check provider documentation for model names."
 else
-  echo "   $MODEL_LIST"
-
-  # Auto-test first non-meta model (skip 'auto', 'router', audio/image models)
+  echo "$MODEL_LIST"
+  
+  # Ping test with first usable model
   FIRST_MODEL=$(echo "$MODELS_JSON" | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
-skip = {'auto', 'step-router-v1'}
-skip_prefix = ('stepaudio', 'step-image')
-for m in d.get('data', []):
-    mid = m.get('id','')
-    if mid in skip or any(mid.startswith(p) for p in skip_prefix):
-        continue
-    print(mid)
-    break
+try:
+    d = json.load(sys.stdin)
+    skip = {'auto', 'step-router-v1'}
+    for m in d.get('data', []):
+        mid = m.get('id', '')
+        if mid not in skip and not mid.startswith(('stepaudio', 'step-image', 'whisper', 'tts', 'dall-e')):
+            print(mid)
+            break
+except Exception:
+    pass
 " 2>/dev/null)
 
   if [[ -n "$FIRST_MODEL" ]]; then
     echo ""
     echo "   Testing $PREFIX/$FIRST_MODEL..."
-    RESP=$(curl -s -m 30 "http://$HOST/v1/chat/completions" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"model\": \"$PREFIX/$FIRST_MODEL\",
-        \"messages\": [{\"role\":\"user\",\"content\":\"reply with exactly: PONG\"}],
-        \"max_tokens\": 10
-      }" 2>/dev/null || echo "{}")
-
+    RESP=$(curl -s -m 30 "http://$HOST/v1/chat/completions"       -H "Content-Type: application/json"       -d "{\"model\": \"$PREFIX/$FIRST_MODEL\", \"messages\": [{\"role\":\"user\",\"content\":\"reply with exactly: PONG\"}], \"max_tokens\": 10}" 2>/dev/null || echo "{}")
+      
     if echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'choices' in d" 2>/dev/null; then
-      echo "   ✅ $PREFIX/$FIRST_MODEL works!"
+      echo "   ✅ Test passed for $PREFIX/$FIRST_MODEL!"
     else
-      ERR=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error',{}).get('message','unknown error')[:100])" 2>/dev/null || echo "timeout or no response")
-      echo "   ⚠️  Test: $ERR"
-      echo "   Provider is added — try other models manually."
+      ERR=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',{}).get('message','timeout/no response'))" 2>/dev/null || echo "unknown error")
+      echo "   ⚠️  Test failed: $ERR"
     fi
   fi
 fi
 
-echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " ✅ Done! Use models as: $PREFIX/<model-name>"
+echo "  AI Agents can add providers automatically via the 'addcp' command:"
+echo "  Example: addcp inference inf https://api.inference.net/v1 sk-xxxx"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 exit 0
