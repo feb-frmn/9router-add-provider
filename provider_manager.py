@@ -318,31 +318,49 @@ def cmd_list(args):
 
 def cmd_add(args):
     db = get_db()
-    ptype = get_provider_type(args)
+    ptype = args.type or 'custom'
     
     if ptype == 'bai':
         result = add_bai_provider(db, args.api_key, args.name)
+    elif ptype in PROVIDER_TEMPLATES and not PROVIDER_TEMPLATES[ptype].get('builtin'):
+        tmpl = PROVIDER_TEMPLATES[ptype]
+        name = args.name or f"{ptype}-{secrets.token_hex(4)}"
+        prefix = args.prefix or tmpl['prefix']
+        url = args.url or tmpl['baseUrl']
+        api_type = args.api_type or tmpl.get('apiType', 'chat')
+        def_model = args.default_model or tmpl.get('defaultModel')
+        result = add_provider(db, name, prefix, url, args.api_key, api_type, def_model)
     else:
-        result = add_provider(db, args.name, args.prefix, args.url, args.api_key, args.api_type, args.default_model)
+        # Custom provider — need prefix and url
+        if not args.prefix or not args.url:
+            print("❌ For custom providers (or with --type custom), --prefix and --url are required")
+            return
+        name = args.name or f"{args.prefix}-{secrets.token_hex(4)}"
+        result = add_provider(db, name, args.prefix, args.url, args.api_key, args.api_type, args.default_model)
     
+    prefix_display = result.get('prefix', args.prefix or ptype)
     print(f"\n✅ Provider added: {result['name']}")
     print(f"   Connection ID: {result['connection_id']}")
     if result['node_created']:
         print(f"   Node created: {result['node_id']}")
-    print(f"   Test: curl {ROUTER_HOST}/v1/chat/completions -d '{{\"model\":\"{args.prefix}/glm-5.2\",\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}],\"max_tokens\":10}}'")
+    print(f"   Test: curl {ROUTER_HOST}/v1/chat/completions -d '{{\"model\":\"{prefix_display}/glm-5.2\",\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}],\"max_tokens\":10}}'")
 
 
 def cmd_fix(args):
     db = get_db()
     
-    if args.prefix:
+    if args.type:
+        # Fix by type (prefix match)
+        fixed = fix_provider(db, prefix=args.type)
+        label = f"type: {args.type}"
+    elif args.prefix:
         fixed = fix_provider(db, prefix=args.prefix)
         label = f"prefix: {args.prefix}"
     elif args.id:
         fixed = fix_provider(db, conn_id=args.id)
         label = f"id: {args.id}"
     else:
-        print("❌ Need --prefix or --id")
+        print("❌ Need --type, --prefix, or --id")
         return
     
     if fixed:
@@ -444,43 +462,39 @@ def cmd_test(args):
 
 # ─── Main ───────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="9router Universal Provider Manager v2.1")
+    parser = argparse.ArgumentParser(description="9router Universal Provider Manager v2")
     parser.add_argument("--db", help=f"SQLite DB path (default: {DB})")
     sub = parser.add_subparsers(dest="command", required=True)
     
     # list
     p_list = sub.add_parser("list", help="List all providers")
     
-    # add
-    p_add = sub.add_parser("add", help="Add a provider")
-    p_add.add_argument("--name", required=True)
-    p_add.add_argument("--prefix", required=True)
-    p_add.add_argument("--url", required=True)
-    p_add.add_argument("--key", dest="api_key", required=True)
-    p_add.add_argument("--api-type", default="chat")
-    p_add.add_argument("--default-model")
-    p_add.add_argument("--type", choices=PROVIDER_TEMPLATES.keys(), help="Provider type for auto-defaults")
+    # add — universal: --type for known providers, or --name/--prefix/--url for custom
+    p_add = sub.add_parser("add", help="Add any provider (use --type for auto-config, or set manually)")
+    p_add.add_argument("--type", choices=[k for k in PROVIDER_TEMPLATES if k != 'custom'],
+                       help="Provider type: bai (B.AI), iamhc, inf (inference.net), openai")
+    p_add.add_argument("--key", dest="api_key", required=True, help="API key")
+    p_add.add_argument("--name", help="Display name (auto-generated if omitted)")
+    p_add.add_argument("--prefix", help="Model prefix (required for custom, auto-set for known types)")
+    p_add.add_argument("--url", help="Base URL (required for custom, auto-set for known types)")
+    p_add.add_argument("--api-type", default="chat", help="API type: chat (default) or responses")
+    p_add.add_argument("--default-model", help="Default model (e.g. glm-5.2 for B.AI)")
     
-    # add-bai
-    p_bai = sub.add_parser("add-bai", help="Add B.AI with healthy defaults")
-    p_bai.add_argument("--key", dest="api_key", required=True)
-    p_bai.add_argument("--name")
-    
-    # fix
-    p_fix = sub.add_parser("fix", help="Fix a broken provider")
-    p_fix.add_argument("--prefix")
-    p_fix.add_argument("--id")
+    # fix — by type, prefix, or id
+    p_fix = sub.add_parser("fix", help="Fix broken providers by type, prefix, or ID")
+    p_fix.add_argument("--type", help="Fix all providers of a type (e.g. bai, iamhc)")
+    p_fix.add_argument("--prefix", help="Fix by model prefix")
+    p_fix.add_argument("--id", help="Fix by connection ID")
     
     # fix-all
-    p_fa = sub.add_parser("fix-all", help="Fix all broken providers")
-    p_fa.add_argument("--bai", action="store_true", help="Fix only B.AI")
+    p_fa = sub.add_parser("fix-all", help="Fix all broken providers at once")
     
     # bulk
-    p_bulk = sub.add_parser("bulk", help="Bulk import providers from file")
+    p_bulk = sub.add_parser("bulk", help="Bulk import from file (format: name|prefix|url|key|type|model)")
     p_bulk.add_argument("--file", required=True)
     
     # test
-    p_test = sub.add_parser("test", help="Test a model")
+    p_test = sub.add_parser("test", help="Test a model through 9router")
     p_test.add_argument("--model", required=True)
     
     args = parser.parse_args()
@@ -492,7 +506,6 @@ if __name__ == "__main__":
     {
         "list": cmd_list,
         "add": cmd_add,
-        "add-bai": cmd_add,
         "fix": cmd_fix,
         "fix-all": cmd_fix_all,
         "bulk": cmd_bulk,

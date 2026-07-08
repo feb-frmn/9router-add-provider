@@ -10,10 +10,10 @@ Scripts + Python CLI + Telegram Bot for adding **any** AI provider to [9router](
 
 ```bash
 # Python CLI (recommended — supports all providers)
-python3 provider-manager.py add-bai --key "sk-or-v1-xxx"
+python3 provider-manager.py add --type bai --key "sk-or-v1-xxx"
 
 # Or bash (legacy — one provider at a time)
-bash add-bai.sh --key "sk-or-v1-xxx"
+ --key "sk-or-v1-xxx"
 ```
 
 ---
@@ -26,7 +26,7 @@ bash add-bai.sh --key "sk-or-v1-xxx"
 | `bot.py` | **Telegram bot** — manage providers from your phone |
 | `add-provider.sh` | Bash — add any custom provider (HTTP API method) |
 | `add-provider-db.sh` | Bash — same but direct DB injection |
-| `add-bai.sh` | Bash — add/fix B.AI (chat.b.ai) with healthy defaults |
+| `add.sh` | Bash — add/fix B.AI (chat.b.ai) with healthy defaults |
 | `fix-provider.sh` | Bash — fix a single broken/red provider |
 | `fix-all.sh` | Bash — fix ALL broken providers at once |
 | `list-providers.sh` | Bash — list all providers and their status |
@@ -44,7 +44,7 @@ No dependencies needed — uses stdlib only.
 # Make executable or run with python3
 python3 provider-manager.py list
 
-python3 provider-manager.py add-bai --key "sk-or-v1-xxx"
+python3 provider-manager.py add --type bai --key "sk-or-v1-xxx"
 
 python3 provider-manager.py add \
   --name "my-iamhc" \
@@ -126,7 +126,7 @@ B.AI keys get **403 "Deposit required"** on premium models (gpt-\*, kimi-\*) but
 
 ```bash
 # Add a B.AI key (CLI)
-python3 provider-manager.py add-bai --key "sk-or-v1-xxx"
+python3 provider-manager.py add --type bai --key "sk-or-v1-xxx"
 
 # Fix existing B.AI connections
 python3 provider-manager.py fix --prefix "bai"

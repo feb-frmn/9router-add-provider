@@ -14,10 +14,9 @@ Setup:
 Commands:
   /start     - Welcome
   /list      - List all providers and status
-  /add <type> <key> - Add provider (type: bai, iamhc, inf, openai, custom)
-  /addbai <key> - Quick add B.AI key with healthy defaults
-  /fix       - Fix all broken providers
-  /fixbai    - Fix B.AI providers only
+  /add <type> <key> - Add provider (types: bai, iamhc, inf, openai)
+  /fix <type> - Fix providers by type (type: bai, iamhc, etc)
+  /fix-all    - Fix all broken providers
   /test <model> - Test a model
   /status    - Quick summary of all providers
 """
@@ -83,13 +82,14 @@ async def handle_message(bot, message):
             "Control your AI providers:\n\n"
             "`/list` — Provider list\n"
             "`/status` — Quick summary\n"
-            "`/addbai sk-or-v1-xxx` — Add B.AI key\n"
+            "`/add bai sk-or-v1-xxx` — Add B.AI key\n"
             "`/add iamhc sk-xxx` — Add iamhc key\n"
             "`/add openai sk-xxx` — Add OpenAI key\n"
-            "`/fix` — Fix all broken\n"
-            "`/fixbai` — Fix B.AI only\n"
-            "`/test bai/glm-5.2` — Test model\n\n"
-            "Format for /add: `/add <type> <api_key>`\n"
+            "`/fix bai` — Fix providers by type\n"
+            "`/fix-all` — Fix all broken\n"
+            "`/test bai/glm-5.2` — Test model\n"
+            "`/help` — All commands\n\n"
+            "Usage: `/add <type> <api_key>`\n"
             f"Types: {', '.join(k for k in PROVIDER_TEMPLATES if k != 'custom')}"
         )
     
@@ -126,10 +126,10 @@ async def handle_message(bot, message):
         except Exception as e:
             await bot.send_message(chat_id, f"❌ Error: {str(e)[:100]}")
     
-    elif text.startswith('/addbai '):
-        key = text[8:].strip()
+    elif text.startswith('/add bai '):
+        key = text[9:].strip()
         if not key:
-            await bot.send_message(chat_id, "❌ Usage: `/addbai sk-or-v1-xxx`")
+            await bot.send_message(chat_id, "❌ Usage: `/add bai <key>`")
             return
         try:
             db = get_db()
@@ -175,45 +175,50 @@ async def handle_message(bot, message):
         try:
             db = get_db()
             where = "json_extract(data, '$.testStatus') = 'unavailable' OR json_extract(data, '$.errorCode') IS NOT NULL"
-            rows = db.execute(f"SELECT id, name FROM providerConnections WHERE {where}").fetchall()
+            rows = db.execute(f"SELECT id, name, data FROM providerConnections WHERE {where}").fetchall()
             if not rows:
                 await bot.send_message(chat_id, "✅ Nothing to fix!")
                 return
             
-            # Fix them all
             fixed = 0
-            for conn_id, name in rows:
+            for conn_id, name, raw in rows:
                 fix_provider(db, conn_id=conn_id)
                 fixed += 1
             
-            await bot.send_message(chat_id, f"✅ Fixed {fixed} provider(s).\nRefresh dashboard — should be green now.")
+            await bot.send_message(chat_id, f"✅ Fixed {fixed} provider(s). Refresh dashboard — should be green now.")
         except Exception as e:
             await bot.send_message(chat_id, f"❌ Error: {str(e)[:100]}")
     
-    elif text == '/fixbai':
+    elif text.startswith('/fix '):
+        # Fix by type (e.g. /fix bai)
+        fix_type = text[5:].strip()
         try:
             db = get_db()
             rows = db.execute(
-                "SELECT id, name FROM providerConnections WHERE json_extract(data, '$.providerSpecificData.prefix')='bai' OR json_extract(data, '$.providerSpecificData.baseUrl') LIKE '%b.ai%'"
+                "SELECT id, name FROM providerConnections WHERE json_extract(data, '$.providerSpecificData.prefix')=? OR json_extract(data, '$.providerSpecificData.baseUrl') LIKE ?",
+                (fix_type, f'%{fix_type}%')
             ).fetchall()
             
             if not rows:
-                await bot.send_message(chat_id, "❌ No B.AI connections found")
+                await bot.send_message(chat_id, f"❌ No connections found for type: {fix_type}")
                 return
             
+            fixed = 0
             for conn_id, name in rows:
                 fix_provider(db, conn_id=conn_id)
-                # Also ensure /v1 baseUrl
+                # Also ensure healthy defaults
                 row = db.execute("SELECT data FROM providerConnections WHERE id=?", (conn_id,)).fetchone()
                 if row:
                     data = json.loads(row[0])
-                    data['providerSpecificData']['baseUrl'] = 'https://api.b.ai/v1'
-                    data['defaultModel'] = 'glm-5.2'
+                    if fix_type == 'bai' or 'b.ai' in data.get('providerSpecificData', {}).get('baseUrl', ''):
+                        data['providerSpecificData']['baseUrl'] = 'https://api.b.ai/v1'
+                        data['defaultModel'] = 'glm-5.2'
                     now = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
                     db.execute("UPDATE providerConnections SET data=?, updatedAt=? WHERE id=?", (json.dumps(data), now, conn_id))
+                fixed += 1
             
             db.commit()
-            await bot.send_message(chat_id, f"✅ Fixed {len(rows)} B.AI connection(s).")
+            await bot.send_message(chat_id, f"✅ Fixed {fixed} provider(s) of type: {fix_type}")
         except Exception as e:
             await bot.send_message(chat_id, f"❌ Error: {str(e)[:100]}")
     
@@ -239,10 +244,10 @@ async def handle_message(bot, message):
             "/start — Help\n"
             "/list — Provider list\n"
             "/status — Quick summary\n"
-            "/addbai \<key\> — Add B.AI\n"
-            "/add \<type\> \<key\> — Add provider\n"
+            "/add bai <key> — Add B.AI\n"
+            "/add <type> <key> — Add provider\n"
             "/fix — Fix all broken\n"
-            "/fixbai — Fix B.AI only\n"
+            "/fix <type> — Fix by type\n"
             "/test \<model\> — Test model"
         )
     
