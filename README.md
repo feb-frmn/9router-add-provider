@@ -18,11 +18,13 @@ bash add-provider.sh \
 ## What's in the repo
 
 | File | What it does |
-|---|---|
+|-----|-------------|
 | `add-provider.sh` | One command to add any custom provider (create node + attach key + verify) |
 | `add-provider-db.sh` | Same thing but injects directly into the SQLite DB (for when HTTP API is flaky) |
+| `add-bai.sh` | Add/fix B.AI (chat.b.ai) keys with healthy defaults (no 403 on premium models) |
 | `list-providers.sh` | Show all providers, connections, and their status |
-| `fix-provider.sh` | Fix a broken/red provider (clear errors, model locks, reset backoff) |
+| `fix-provider.sh` | Fix a single broken/red provider (clear errors, model locks, reset backoff) |
+| `fix-all.sh` | Fix ALL broken providers at once — or only B.AI with `--bai` |
 | `providers.md` | Full catalog of all 94 built-in providers |
 | `examples/` | Ready-to-use configs for popular unknown providers |
 
@@ -61,6 +63,37 @@ Provider showing red in dashboard? Clear its error state:
 bash fix-provider.sh --prefix "inf"
 # or by connection ID:
 bash fix-provider.sh --id "7fbad63f-002a-4c99-8c5a-0461482abaa8"
+```
+
+### Fix all red providers at once (batch)
+
+```bash
+# Fix ALL unavailable/error connections
+bash fix-all.sh
+
+# Fix only B.AI connections (with healthy defaults)
+bash fix-all.sh --bai
+
+# Preview what would be fixed
+bash fix-all.sh --dry-run
+```
+
+### B.AI (chat.b.ai) — special handling
+
+B.AI keys get **403 "Deposit required"** on premium models (gpt-*, kimi-*) but **GLM-5.2 works free** (~1M tokens/day). These scripts inject keys with healthy defaults to skip broken model tests:
+
+```bash
+# Add a single B.AI key
+bash add-bai.sh --key "sk-or-v1-xxx"
+
+# Fix existing B.AI connections gone red
+bash add-bai.sh --fix-prefix "bai"
+
+# Batch import from file (one key per line)
+bash add-bai.sh --batch keys.txt
+
+# Test: curl -s http://localhost:20128/v1/chat/completions \
+#   -d '{"model":"bai/glm-5.2","messages":[{"role":"user","content":"PONG"}],"max_tokens":5}'
 ```
 
 ## Examples
