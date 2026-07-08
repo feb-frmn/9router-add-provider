@@ -1,0 +1,4 @@
+# Core - no deps needed for CLI mode
+# For Telegram bot mode:
+python-telegram-bot>=20.0
+aiohttp>=3.8.0
